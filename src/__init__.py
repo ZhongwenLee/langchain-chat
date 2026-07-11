@@ -13,6 +13,7 @@ from .models import (
     UserRole,
 )
 from .preset_manager import PresetManager, PresetSummary
+from .session_manager import SessionManager, SessionManagerError, SessionSummary
 from .storage import (
     FileStorageBackend,
     MySQLStorageBackend,
@@ -41,6 +42,9 @@ __all__ = [
     "PresetSummary",
     "SQLiteStorageBackend",
     "Session",
+    "SessionManager",
+    "SessionManagerError",
+    "SessionSummary",
     "StorageBackend",
     "StorageBackendType",
     "StorageExportResult",
