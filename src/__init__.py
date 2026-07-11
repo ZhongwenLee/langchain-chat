@@ -13,6 +13,7 @@ from .models import (
     UserRole,
 )
 from .preset_manager import PresetManager, PresetSummary
+from .chat_engine import ChatChunk, ChatClaude, ChatEngine, ChatEngineInspector, ChatResponse, ChatTurn, TokenUsage
 from .session_manager import SessionManager, SessionManagerError, SessionSummary
 from .storage import (
     FileStorageBackend,
@@ -29,6 +30,12 @@ from .storage import (
 from .user_manager import UserManager, UserManagerError, UserPreferenceChange
 
 __all__ = [
+    "ChatChunk",
+    "ChatClaude",
+    "ChatEngine",
+    "ChatEngineInspector",
+    "ChatResponse",
+    "ChatTurn",
     "ConfigBundle",
     "ConfigError",
     "ConfigManager",
@@ -48,6 +55,7 @@ __all__ = [
     "StorageBackend",
     "StorageBackendType",
     "StorageExportResult",
+    "TokenUsage",
     "StorageFactory",
     "StoragePagination",
     "StoragePage",

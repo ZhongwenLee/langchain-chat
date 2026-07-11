@@ -156,7 +156,26 @@ class SQLiteStorageBackend(StorageBackend):
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(coro)
-        raise RuntimeError("当前事件循环中请使用异步方法")
+
+        # 在已经运行事件循环的上下文里，不能直接阻塞等待同一个 loop 的协程，
+        # 因此把协程放到独立线程里执行，保留同步 API 的可用性。
+        import threading
+
+        result: dict[str, Any] = {}
+        error: list[BaseException] = []
+
+        def runner() -> None:
+            try:
+                result["value"] = asyncio.run(coro)
+            except BaseException as exc:  # noqa: BLE001
+                error.append(exc)
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join()
+        if error:
+            raise error[0]
+        return result.get("value")
 
     async def ainitialize(self) -> None:
         await self.aconnect()
