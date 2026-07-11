@@ -62,12 +62,13 @@ class ConfigBundle:
     logging: LoggingConfig
     secrets: SecretConfig
     raw_environment: dict[str, str] = field(default_factory=dict)
+    presets: dict[str, Any] = field(default_factory=dict)
 
 
 class ConfigManager:
     """统一配置加载器。
 
-    负责从 .env、config.yaml、config/logging.yaml 加载配置，
+    负责从 .env、config.yaml、config/logging.yaml、config/presets.yaml 加载配置，
     并在缺失关键配置时给出明确错误信息。
     """
 
@@ -81,6 +82,8 @@ class ConfigManager:
         env_values = self._load_env_file(self.base_path / ".env")
         app_values = self._load_yaml_file(self._config_dir / "config.yaml")
         logging_values = self._load_yaml_file(self._config_dir / "logging.yaml")
+        presets_path = self._config_dir / "presets.yaml"
+        presets_values = self._load_yaml_file(presets_path) if presets_path.exists() else {}
 
         secrets = SecretConfig(
             api_key=self._require_value("API_KEY", env_values),
@@ -94,6 +97,7 @@ class ConfigManager:
             logging=logging_config,
             secrets=secrets,
             raw_environment=env_values,
+            presets=presets_values,
         )
 
     def _load_env_file(self, path: Path) -> dict[str, str]:

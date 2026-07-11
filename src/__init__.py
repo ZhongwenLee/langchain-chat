@@ -1,5 +1,6 @@
 """项目入口包。"""
 
+from .config_manager import ConfigBundle, ConfigError, ConfigManager
 from .models import (
     Message,
     MessageRole,
@@ -11,6 +12,7 @@ from .models import (
     UserConfig,
     UserRole,
 )
+from .preset_manager import PresetManager, PresetSummary
 from .storage import (
     FileStorageBackend,
     MySQLStorageBackend,
@@ -25,12 +27,17 @@ from .storage import (
 )
 
 __all__ = [
+    "ConfigBundle",
+    "ConfigError",
+    "ConfigManager",
     "FileStorageBackend",
     "Message",
     "MessageRole",
     "MySQLStorageBackend",
     "Preset",
+    "PresetManager",
     "PresetScope",
+    "PresetSummary",
     "SQLiteStorageBackend",
     "Session",
     "StorageBackend",

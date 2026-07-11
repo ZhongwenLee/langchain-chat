@@ -24,6 +24,10 @@ def config_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "version: 1\nroot:\n  level: INFO\n  handlers: [console]\n",
         encoding="utf-8",
     )
+    (tmp_path / "config" / "presets.yaml").write_text(
+        "system_presets:\n  - id: default-assistant\n    name: 默认助手\n    scope: global\n    model_name: gpt-4.1\n    temperature: 0.7\n    prompt_template: |\n      你是一个专业助手。\n",
+        encoding="utf-8",
+    )
     monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     return tmp_path
