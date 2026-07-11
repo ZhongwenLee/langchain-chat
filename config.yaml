@@ -1,0 +1,5 @@
+app_name: "langchain-chat"
+debug: false
+environment:
+  name: "development"
+  overrides: {}
