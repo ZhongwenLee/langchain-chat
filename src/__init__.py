@@ -25,6 +25,7 @@ from .storage import (
     StoragePage,
     StorageSearchQuery,
 )
+from .user_manager import UserManager, UserManagerError, UserPreferenceChange
 
 __all__ = [
     "ConfigBundle",
@@ -50,5 +51,8 @@ __all__ = [
     "TimeStampedModel",
     "User",
     "UserConfig",
+    "UserManager",
+    "UserManagerError",
+    "UserPreferenceChange",
     "UserRole",
 ]
