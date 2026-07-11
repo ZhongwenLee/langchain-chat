@@ -32,6 +32,8 @@ def config_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_config_manager_loads_all_configs(config_root: Path) -> None:
     """验证配置中心可以一次性加载全部配置。"""
 
+    # 这个用例的核心价值是确认“文件读取 + 环境合并 + 类型转换”这条链路没有断点。
+
     config = ConfigManager(base_path=config_root).load()
 
     assert config.secrets.api_key == "test-key"

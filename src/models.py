@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class TimeStampedModel(BaseModel):
     """所有业务模型共用的时间字段基类。"""
 
+    # 统一用 UTC 时间，避免不同操作系统、容器和部署地域之间出现时区歧义。
+    # 业务层如果需要本地化展示，可以在 UI 或接口层再转换为目标时区。
+
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="创建时间，统一使用 UTC 时间，避免跨时区存储和展示产生歧义。",
@@ -24,6 +27,9 @@ class TimeStampedModel(BaseModel):
     @classmethod
     def _ensure_timezone_aware(cls, value: datetime) -> datetime:
         """强制时间字段带时区，避免 naive datetime 混入数据契约。"""
+
+        # 只要时间值没有明确时区，就无法稳定地序列化、比较和跨系统同步。
+        # 因此这里直接拒绝，避免“看似能用、实际会漂移”的隐性问题。
 
         if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
             raise ValueError("时间字段必须是带时区的 datetime")
@@ -67,6 +73,7 @@ class User(TimeStampedModel):
     @field_validator("username")
     @classmethod
     def _normalize_username(cls, value: str) -> str:
+        # 统一去除首尾空格，避免同一个用户名因为输入习惯不同而出现“看起来相同、实际上不同”的脏数据。
         value = value.strip()
         if not value:
             raise ValueError("username 不能为空")
@@ -75,6 +82,7 @@ class User(TimeStampedModel):
     @field_validator("email")
     @classmethod
     def _normalize_email(cls, value: str) -> str:
+        # 邮箱统一转小写是为了减少重复账号、唯一索引冲突和检索不一致的问题。
         value = value.strip().lower()
         if "@" not in value:
             raise ValueError("email 格式不合法")
@@ -131,6 +139,8 @@ class Preset(TimeStampedModel):
     @model_validator(mode="after")
     def _validate_scope_and_owner(self) -> "Preset":
         """根据可见范围约束 owner_id 是否允许为空。"""
+
+        # private/shared 预设必须明确归属某个用户，只有 global 预设才允许由系统侧统一管理。
 
         if self.scope in {PresetScope.PRIVATE, PresetScope.SHARED} and self.owner_id is None:
             raise ValueError("private/shared 作用域的 preset 必须绑定 owner_id")

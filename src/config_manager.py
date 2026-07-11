@@ -99,6 +99,8 @@ class ConfigManager:
     def _load_env_file(self, path: Path) -> dict[str, str]:
         """加载 .env 文件，并与当前进程环境变量合并。"""
 
+        # 合并顺序刻意让进程环境变量覆盖 .env。
+        # 这样更符合本地开发、CI 和部署环境的常见预期：外部注入的配置优先级更高。
         file_values = dotenv_values(path) if path.exists() else {}
         merged = {**file_values, **os.environ}
         return {key: str(value) for key, value in merged.items() if value is not None}
@@ -125,6 +127,8 @@ class ConfigManager:
     def _build_app_config(self, data: dict[str, Any]) -> AppConfig:
         """将原始字典转换为强类型应用配置。"""
 
+        # 这里先做最小必要校验，再构造领域对象。
+        # 这样可以把“配置格式错误”尽早暴露，而不是把脏数据带到后续业务流程里。
         app_name = data.get("app_name")
         if not isinstance(app_name, str) or not app_name.strip():
             raise ConfigError("config.yaml 中缺失或非法的 app_name")
