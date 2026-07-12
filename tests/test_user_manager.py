@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from src.config_manager import ConfigBundle, AppConfig, EnvironmentConfig, LoggingConfig, SecretConfig
-from src.models import UserConfig
+from src.models import PresetScope, UserConfig
 from src.storage import SQLiteStorageBackend
 from src.user_manager import UserManager, UserManagerError
 
@@ -88,3 +88,20 @@ def test_delete_user_removes_current_user(user_manager: UserManager) -> None:
 def test_switch_to_missing_user_raises(user_manager: UserManager) -> None:
     with pytest.raises(UserManagerError, match="未找到用户"):
         user_manager.switch_current_user(UUID(int=999))
+
+
+def test_user_preset_crud_and_active_preset(user_manager: UserManager) -> None:
+    user = user_manager.create_user("Alice", "alice@example.com")
+
+    created = user_manager.create_user_preset("Coding", "You are helpful", "gpt-4.1", scope=PresetScope.PRIVATE, user_id=user.id)
+    listed = user_manager.list_user_presets(user.id)
+    fetched = user_manager.get_user_preset(created.id, user.id)
+    updated = user_manager.update_user_preset(created.id, name="Coding Pro", temperature=0.2, user_id=user.id)
+    config = user_manager.set_active_preset(created.id, user.id)
+
+    assert listed and listed[0].id == created.id
+    assert fetched is not None and fetched.owner_id == user.id
+    assert updated.name == "Coding Pro"
+    assert config.active_preset_id == created.id
+    assert user_manager.delete_user_preset(created.id, user.id) is True
+    assert user_manager.get_user_preset(created.id, user.id) is None

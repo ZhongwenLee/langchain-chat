@@ -71,13 +71,16 @@ async def run_all() -> None:
     session_manager = SessionManager(storage=backend, user_manager=user_manager)
     preset_manager = PresetManager(config=config)
 
-    print("[1/12] 用户与配置")
+    print("[1/13] 用户、配置与预设初始化")
     alice = user_manager.create_user(username="alice", email="alice@example.com")
     bob = user_manager.create_user(username="bob", email="bob@example.com")
     assert user_manager.get_current_user() is not None
-    assert user_manager.get_user_config(alice.id).user_id == alice.id
+    alice_config = user_manager.get_user_config(alice.id)
+    assert alice_config.user_id == alice.id
     user_manager.set_user_preference("font_size", "16", user_id=alice.id)
-    assert user_manager.get_user_config(alice.id).preferences["font_size"] == "16"
+    user_manager.set_active_preset(None, user_id=alice.id)
+    custom_preset = user_manager.create_user_preset("个人助手", "请用简洁中文回答", "claude-3-haiku", user_id=alice.id)
+    assert user_manager.get_user_preset(custom_preset.id, alice.id) is not None
     assert len(user_manager.list_users()) == 2
 
     print("[2/12] 会话创建、重命名、归档")
@@ -177,14 +180,19 @@ async def run_all() -> None:
     assert stats.total_tokens >= stats.prompt_tokens
     assert stats.message_count >= 2
 
-    print("[11/12] TUI 菜单与事件")
+    print("[11/13] TUI 菜单、预设与配置事件")
     actions = app.get_menu_actions()
     assert any(action.key == "search" for action in actions)
+    assert any(action.key == "presets" for action in actions)
     assert app.handle_event({"name": "noop"}) is not None
     search_event = app.handle_event(type("E", (), {"name": "search_messages", "payload": {"keyword": "关键词"}})())
     assert search_event.ok is True
+    preset_list_event = app.handle_event({"name": "preset_list"})
+    assert preset_list_event.ok is True
+    config_event = app.handle_event({"name": "user_config_get"})
+    assert config_event.ok is True
 
-    print("[12/12] 配置加载与会话生命周期补充")
+    print("[12/13] 配置加载与会话生命周期补充")
     assert config.app.app_name == "self-test"
     assert config.secrets.api_key == "test-key"
     assert session_manager.set_active_session(target_session.id, user_id=alice.id).id == target_session.id
@@ -196,6 +204,12 @@ async def run_all() -> None:
     deleted_user = user_manager.delete_user(bob.id)
     assert deleted_user is True
     assert user_manager.get_user(bob.id) is None
+
+    print("[13/13] 预设删除与配置持久化校验")
+    assert user_manager.delete_user_preset(custom_preset.id, alice.id) is True
+    assert user_manager.get_user_preset(custom_preset.id, alice.id) is None
+    persisted_config = user_manager.get_user_config(alice.id)
+    assert persisted_config.preferences["font_size"] == "16"
 
     await backend.aclose()
     print("\n全部自检通过。")

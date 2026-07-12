@@ -7,10 +7,10 @@ from typing import Any
 from uuid import UUID
 
 from .chat_engine import ChatEngine, ChatEngineInspector
-from .models import MessageRole, Session, User
+from .models import MessageRole, Preset, PresetScope, Session, User, UserConfig
 from .session_manager import SessionManager, SessionManagerError, SessionSummary
 from .ui_protocol import ConversationPreview, MenuAction, UIEvent, UIKind, UIResult, UIState
-from .user_manager import UserManager, UserManagerError
+from .user_manager import PresetChange, UserManager, UserManagerError
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,7 @@ class TUIApp:
     _state_cache: UIState = field(default_factory=lambda: UIState(kind=UIKind.TUI), init=False, repr=False)
     _paused: bool = field(default=False, init=False, repr=False)
     export_root: Path = field(default_factory=lambda: Path.home() / "langchain-chat-exports")
+    preset_root: Path = field(default_factory=lambda: Path.home() / "langchain-chat-presets")
 
     def build_state(self) -> UIState:
         current_user = self.user_manager.get_current_user()
@@ -162,7 +163,46 @@ class TUIApp:
             MenuAction(key="search", title="搜索消息", description="按关键词检索历史消息"),
             MenuAction(key="export", title="导出会话 Markdown", description="导出完整会话到用户目录"),
             MenuAction(key="stats", title="查看 token 统计", description="查看当前会话 token 统计"),
+            MenuAction(key="presets", title="预设管理", description="管理个人预设与默认启用项"),
+            MenuAction(key="user-config", title="用户配置", description="查看和修改主题、语言、默认模型"),
         ]
+
+    def list_user_presets(self) -> list[Preset]:
+        current_user = self.user_manager.get_current_user()
+        return self.user_manager.list_user_presets(current_user.id if current_user else None)
+
+    def create_user_preset(self, name: str, prompt_template: str, model_name: str, *, temperature: float = 0.7, scope: PresetScope = PresetScope.PRIVATE) -> Preset:
+        current_user = self.user_manager.get_current_user()
+        if current_user is None:
+            raise UserManagerError("当前没有登录用户")
+        return self.user_manager.create_user_preset(name, prompt_template, model_name, temperature=temperature, scope=scope, user_id=current_user.id)
+
+    def update_user_preset(self, preset_id: str | UUID, *, name: str | None = None, prompt_template: str | None = None, model_name: str | None = None, temperature: float | None = None, scope: PresetScope | None = None) -> Preset:
+        current_user = self.user_manager.get_current_user()
+        if current_user is None:
+            raise UserManagerError("当前没有登录用户")
+        return self.user_manager.update_user_preset(preset_id, name=name, prompt_template=prompt_template, model_name=model_name, temperature=temperature, scope=scope, user_id=current_user.id)
+
+    def delete_user_preset(self, preset_id: str | UUID) -> bool:
+        current_user = self.user_manager.get_current_user()
+        if current_user is None:
+            raise UserManagerError("当前没有登录用户")
+        return self.user_manager.delete_user_preset(preset_id, user_id=current_user.id)
+
+    def get_user_config(self, user_id: str | UUID | None = None) -> UserConfig:
+        return self.user_manager.get_user_config(user_id)
+
+    def update_user_config(self, payload: dict[str, Any], *, user_id: str | UUID | None = None) -> UserConfig:
+        current_user_id = user_id
+        if current_user_id is None:
+            current_user = self.user_manager.get_current_user()
+            if current_user is None:
+                raise UserManagerError("当前没有登录用户")
+            current_user_id = current_user.id
+        config = self.user_manager.get_user_config(current_user_id)
+        updated = UserConfig.model_validate({**config.model_dump(), **{k: v for k, v in payload.items() if k in {"theme", "language", "default_model", "active_preset_id", "preferences"} and v is not None}, "updated_at": datetime.now(timezone.utc)})
+        self.user_manager.storage.update("user_configs", str(updated.id), updated)
+        return updated
 
     def get_status_summary(self) -> str:
         current_user = self._state_cache.current_user
@@ -231,6 +271,24 @@ class TUIApp:
         if event.name == "session_stats":
             stats = self.get_session_stats(event.payload.get("session_id"))
             return UIResult(ok=True, message="统计完成", data=stats.__dict__)
+        if event.name == "preset_list":
+            presets = self.list_user_presets()
+            return UIResult(ok=True, message=f"找到 {len(presets)} 个个人预设", data={"presets": [preset.model_dump(mode="json") for preset in presets]})
+        if event.name == "preset_create":
+            preset = self.create_user_preset(str(event.payload["name"]), str(event.payload["prompt_template"]), str(event.payload["model_name"]), temperature=float(event.payload.get("temperature", 0.7)), scope=PresetScope(str(event.payload.get("scope", PresetScope.PRIVATE.value))))
+            return UIResult(ok=True, message="预设已创建", data=preset.model_dump(mode="json"))
+        if event.name == "preset_update":
+            preset = self.update_user_preset(event.payload["preset_id"], name=event.payload.get("name"), prompt_template=event.payload.get("prompt_template"), model_name=event.payload.get("model_name"), temperature=event.payload.get("temperature"), scope=PresetScope(event.payload["scope"]) if event.payload.get("scope") else None)
+            return UIResult(ok=True, message="预设已更新", data=preset.model_dump(mode="json"))
+        if event.name == "preset_delete":
+            deleted = self.delete_user_preset(event.payload["preset_id"])
+            return UIResult(ok=deleted, message="预设已删除" if deleted else "未找到预设")
+        if event.name == "user_config_get":
+            config = self.get_user_config(event.payload.get("user_id"))
+            return UIResult(ok=True, message="读取用户配置成功", data=config.model_dump(mode="json"))
+        if event.name == "user_config_set":
+            config = self.update_user_config(event.payload, user_id=event.payload.get("user_id"))
+            return UIResult(ok=True, message="用户配置已保存", data=config.model_dump(mode="json"))
         return UIResult(ok=False, message=f"不支持的事件: {event.name}")
 
     def build_menu(self) -> list[MenuAction]:
@@ -241,6 +299,8 @@ class TUIApp:
             MenuAction(key="search", title="搜索消息", description="按关键词检索历史消息"),
             MenuAction(key="export", title="导出会话 Markdown", description="导出完整会话到用户目录"),
             MenuAction(key="stats", title="查看 token 统计", description="查看当前会话 token 统计"),
+            MenuAction(key="presets", title="预设管理", description="管理个人预设与默认启用项"),
+            MenuAction(key="user-config", title="用户配置", description="查看和修改主题、语言、默认模型"),
         ]
 
     def _build_snippet(self, content: str, keyword: str, width: int = 24) -> str:

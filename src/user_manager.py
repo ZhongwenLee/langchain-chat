@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from .models import User, UserConfig
+from .models import Preset, PresetScope, User, UserConfig
 from .storage import StorageBackend, StoragePagination
 
 
@@ -21,6 +21,14 @@ class UserPreferenceChange:
 
     user_id: UUID
     preferences: dict[str, str]
+
+
+@dataclass(frozen=True)
+class PresetChange:
+    """用户预设变更结果。"""
+
+    preset_id: UUID
+    owner_id: UUID
 
 
 @dataclass
@@ -106,6 +114,53 @@ class UserManager:
             # 否则后续访问会出现“当前用户已经不存在”的悬空状态。
             self.current_user_id = None
         return deleted
+
+    def list_user_presets(self, user_id: str | UUID | None = None) -> list[Preset]:
+        """列出用户可管理的预设，仅返回私有/共享预设。"""
+
+        owner_id = self._resolve_user_id(user_id)
+        page = self.storage.list("presets", StoragePagination(page=1, page_size=1000), filters={"owner_id": str(owner_id)})
+        return [item for item in page.items if isinstance(item, Preset) and item.scope in {PresetScope.PRIVATE, PresetScope.SHARED}]
+
+    def get_user_preset(self, preset_id: str | UUID, user_id: str | UUID | None = None) -> Preset | None:
+        preset = self._get_model("presets", preset_id, Preset)
+        if preset is None:
+            return None
+        owner_id = self._resolve_user_id(user_id)
+        if preset.owner_id != owner_id or preset.scope == PresetScope.GLOBAL:
+            return None
+        return preset
+
+    def create_user_preset(self, name: str, prompt_template: str, model_name: str, *, temperature: float = 0.7, scope: PresetScope = PresetScope.PRIVATE, user_id: str | UUID | None = None) -> Preset:
+        """创建用户自定义预设。"""
+
+        owner_id = self._resolve_user_id(user_id)
+        if scope is PresetScope.GLOBAL:
+            raise UserManagerError("用户预设不能创建为 global 作用域")
+        preset = Preset.model_validate({"owner_id": owner_id, "name": name, "scope": scope, "prompt_template": prompt_template, "model_name": model_name, "temperature": temperature})
+        self.storage.create("presets", preset)
+        return preset
+
+    def update_user_preset(self, preset_id: str | UUID, *, name: str | None = None, prompt_template: str | None = None, model_name: str | None = None, temperature: float | None = None, scope: PresetScope | None = None, user_id: str | UUID | None = None) -> Preset:
+        owner_id = self._resolve_user_id(user_id)
+        preset = self.get_user_preset(preset_id, owner_id)
+        if preset is None:
+            raise UserManagerError(f"未找到用户预设: {preset_id}")
+        updated = Preset.model_validate({**preset.model_dump(), **{k: v for k, v in {"name": name, "prompt_template": prompt_template, "model_name": model_name, "temperature": temperature, "scope": scope}.items() if v is not None}, "owner_id": owner_id, "updated_at": datetime.now(timezone.utc)})
+        self.storage.update("presets", str(updated.id), updated)
+        return updated
+
+    def delete_user_preset(self, preset_id: str | UUID, user_id: str | UUID | None = None) -> bool:
+        preset = self.get_user_preset(preset_id, user_id)
+        if preset is None:
+            return False
+        return self.storage.delete("presets", str(preset.id))
+
+    def set_active_preset(self, preset_id: str | UUID | None, user_id: str | UUID | None = None) -> UserConfig:
+        config = self.get_user_config(user_id)
+        updated = UserConfig.model_validate({**config.model_dump(), "active_preset_id": None if preset_id is None else UUID(str(preset_id)), "updated_at": datetime.now(timezone.utc)})
+        self.storage.update("user_configs", str(updated.id), updated)
+        return updated
 
     def get_user(self, user_id: str | UUID) -> User | None:
         return self._get_model("users", user_id, User)

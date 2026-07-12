@@ -69,12 +69,26 @@ def test_tui_state_and_actions(app: TUIApp) -> None:
     assert state.active_session is not None
     assert "model_name" in state.metadata
     assert app.get_status_summary().startswith("模型 claude-3-haiku")
-    assert len(app.get_menu_actions()) >= 3
+    assert any(action.key == "presets" for action in app.get_menu_actions())
+    assert any(action.key == "user-config" for action in app.get_menu_actions())
 
     pause_result = app.handle_event(UIEvent(name="pause"))
     resume_result = app.handle_event(UIEvent(name="resume"))
     assert pause_result.ok is True
     assert resume_result.ok is True
+
+
+def test_tui_preset_and_user_config_flow(app: TUIApp) -> None:
+    created = app.create_user_preset("个人助手", "请用简洁中文回答", "claude-3-haiku")
+    listed = app.list_user_presets()
+    config = app.update_user_config({"theme": "dark", "language": "zh-CN", "default_model": "claude-3-haiku", "active_preset_id": str(created.id), "preferences": {"font_size": "16"}})
+
+    assert created in listed
+    assert config.theme == "dark"
+    assert config.active_preset_id == created.id
+    fetched = app.get_user_config()
+    assert fetched.preferences["font_size"] == "16"
+    assert app.delete_user_preset(created.id) is True
 
 
 @pytest.mark.asyncio
