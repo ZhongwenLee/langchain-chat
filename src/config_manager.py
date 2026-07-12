@@ -6,7 +6,29 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import dotenv_values
+
+try:
+    from dotenv import dotenv_values
+except Exception:  # pragma: no cover - 环境缺少 python-dotenv 时的兜底实现
+    def dotenv_values(path: str | Path | None = None) -> dict[str, str]:
+        """极简 .env 解析器。
+
+        这样即便测试环境没有安装 python-dotenv，也能继续完成配置加载与单元测试。
+        """
+
+        if path is None:
+            return {}
+        file_path = Path(path)
+        if not file_path.exists():
+            return {}
+        values: dict[str, str] = {}
+        for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+        return values
 
 
 class ConfigError(RuntimeError):
@@ -29,6 +51,8 @@ class EnvironmentConfig:
 class AppConfig:
     app_name: str
     debug: bool = False
+    default_model: str = ""
+    storage_type: str = "sqlite"
     environment: EnvironmentConfig = field(default_factory=EnvironmentConfig)
 
 
@@ -64,9 +88,9 @@ class ConfigManager:
         self._env_name = self._normalize_env_name(env_name or os.getenv("APP_ENV", "dev"))
 
     def load(self) -> ConfigBundle:
-        base_env = self._load_env_file(self.base_path / ".env")
-        env_env = self._load_env_file(self.base_path / f".env.{self._env_name}")
-        env_values = self._merge_dicts(base_env, env_env)
+        env_values = self._load_env_file(self.base_path / f".env.{self._env_name}")
+        if not env_values:
+            env_values = self._load_env_file(self.base_path / ".env")
         config_values = self._load_config_yaml("config.yaml", f"config.{self._env_name}.yaml")
         logging_values = self._load_config_yaml("logging.yaml", f"logging.{self._env_name}.yaml", optional=True)
         presets_values = self._load_config_yaml("presets.yaml", f"presets.{self._env_name}.yaml", optional=True)
@@ -74,7 +98,13 @@ class ConfigManager:
         app_config = self._build_app_config(config_values)
         logging_config = self._build_logging_config(logging_values)
         environment = self._build_environment_config(config_values, env_values)
-        app_config = AppConfig(app_name=app_config.app_name, debug=app_config.debug, environment=environment)
+        app_config = AppConfig(
+            app_name=app_config.app_name,
+            debug=app_config.debug,
+            default_model=app_config.default_model,
+            storage_type=app_config.storage_type,
+            environment=environment,
+        )
         return ConfigBundle(app=app_config, logging=logging_config, secrets=secrets, raw_environment=env_values, presets=presets_values)
 
     def _normalize_env_name(self, env_name: str) -> str:
@@ -86,7 +116,8 @@ class ConfigManager:
     def _load_env_file(self, path: Path) -> dict[str, str]:
         file_values = dotenv_values(path) if path.exists() else {}
         merged = {**file_values, **os.environ}
-        return {key: str(value) for key, value in merged.items() if value is not None}
+        allowed_keys = {"APP_ENV", "API_KEY", "DATABASE_URL", "MODEL_NAME", "API_BASE_URL"}
+        return {key: str(value) for key, value in merged.items() if value is not None and key in allowed_keys}
 
     def _load_yaml_file(self, path: Path) -> dict[str, Any]:
         if not path.exists():
@@ -131,7 +162,18 @@ class ConfigManager:
         app_name = data.get("app_name")
         if not isinstance(app_name, str) or not app_name.strip():
             raise ConfigError("config.yaml 中缺失或非法的 app_name")
-        return AppConfig(app_name=app_name, debug=bool(data.get("debug", False)))
+        storage = data.get("storage", {})
+        if not isinstance(storage, dict):
+            raise ConfigError("config.yaml 中 storage 必须是字典")
+        llm = data.get("llm", {})
+        if not isinstance(llm, dict):
+            raise ConfigError("config.yaml 中 llm 必须是字典")
+        return AppConfig(
+            app_name=app_name,
+            debug=bool(data.get("debug", False)),
+            default_model=str(llm.get("default_model", "")).strip(),
+            storage_type=str(storage.get("type", "sqlite")).strip(),
+        )
 
     def _build_environment_config(self, data: dict[str, Any], env_values: dict[str, str]) -> EnvironmentConfig:
         env_data = data.get("environment", {})
@@ -147,10 +189,10 @@ class ConfigManager:
         return EnvironmentConfig(
             name=self._env_name,
             overrides=dict(overrides),
-            env_file=f".env.{self._env_name}" if (self.base_path / f".env.{self._env_name}").exists() else ".env",
+            env_file=f".env.{self._env_name}" if (self.base_path / f".env.{self._env_name}").exists() else None,
             config_file=config_file,
             source=self._env_name,
-            merged_keys=tuple(sorted(k for k in env_values.keys() if k in {"APP_ENV", "API_KEY", "DATABASE_URL", "MODEL_NAME"})),
+            merged_keys=tuple(sorted(env_values.keys())),
         )
 
     def _build_logging_config(self, data: dict[str, Any]) -> LoggingConfig:

@@ -1,5 +1,9 @@
 app_name: "langchain-chat-test"
 debug: false
+storage:
+  type: "sqlite"
+llm:
+  default_model: "gpt-4.1-mini"
 environment:
   name: "test"
   overrides:

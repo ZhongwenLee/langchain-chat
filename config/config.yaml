@@ -1,11 +1,11 @@
 app_name: "langchain-chat"
 debug: false
 storage:
-  type: "mysql"
+  type: "sqlite"
 llm:
   default_model: "gpt-4.1"
 environment:
-  name: "prod"
+  name: "base"
   overrides:
-    database_profile: "production"
-    secret_scope: "runtime"
+    database_profile: "default"
+    secret_scope: "shared"

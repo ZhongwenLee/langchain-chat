@@ -61,14 +61,11 @@ class ChatModel(Protocol):
 
 
 class ChatClaude:
-    """Claude 模型适配器。
+    """OpenAI 兼容模型适配器。
 
-    这里刻意只定义“聊天引擎所需要的最小能力”，而不是直接依赖某个具体 LangChain
-    版本的复杂对象。这样做的好处是：
-    1. 业务层可以稳定依赖本模块；
-    2. 未来无论是 LangChain Anthropic、直接 Anthropic SDK，还是本地 mock 实现，
-       都可以通过同一协议接入；
-    3. 测试时可以轻松注入假实现，避免依赖外部网络。
+    这里保留历史命名 `ChatClaude`，主要是为了兼容当前项目里已有的测试与调用方；
+    但底层实现改为 OpenAI 兼容接口，这样更符合本项目“支持所有 OpenAI 兼容 API”的
+    需求，也避免把业务层绑定到某一家供应商。
     """
 
     def __init__(
@@ -76,25 +73,23 @@ class ChatClaude:
         *,
         model_name: str,
         api_key: str | None = None,
+        base_url: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
         client: Any | None = None,
     ) -> None:
         self.model_name = model_name
         self.api_key = api_key
+        self.base_url = base_url
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = client or self._build_client()
 
     def _build_client(self) -> Any:
-        # 这里优先尝试对接 langchain_anthropic；如果运行环境没有安装相关依赖，
-        # 则保留一个明确的占位错误，避免在真正发起请求时才出现更难定位的问题。
         try:
-            from langchain_anthropic import ChatAnthropic
+            from langchain_openai import ChatOpenAI
         except Exception as exc:  # pragma: no cover - 依赖缺失时的兜底路径
-            raise RuntimeError(
-                "缺少 langchain_anthropic 依赖，无法创建 ChatClaude 客户端"
-            ) from exc
+            raise RuntimeError("缺少 langchain_openai 依赖，无法创建聊天客户端") from exc
 
         kwargs: dict[str, Any] = {
             "model": self.model_name,
@@ -102,9 +97,11 @@ class ChatClaude:
         }
         if self.api_key:
             kwargs["api_key"] = self.api_key
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
-        return ChatAnthropic(**kwargs)
+        return ChatOpenAI(**kwargs)
 
     async def astream(self, messages: list[dict[str, str]], **kwargs: Any) -> AsyncIterator[ChatChunk]:
         # LangChain 标准流式接口通常会返回 AIMessageChunk；这里把它统一收敛成 ChatChunk，
