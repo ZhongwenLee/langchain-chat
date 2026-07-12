@@ -9,7 +9,7 @@ from uuid import UUID
 
 from src import ChatChunk, ChatEngine, ChatTurn, MessageRole, PresetManager, SessionManager, TUIApp, UserManager
 from src.chat_engine import ChatResponse, TokenUsage
-from src.config_manager import AppConfig, ConfigBundle, EnvironmentConfig, LoggingConfig, SecretConfig
+from src.config_manager import AppConfig, ConfigBundle, ConfigManager, EnvironmentConfig, LoggingConfig, SecretConfig
 from src.models import Message, Preset, PresetScope, Session, User, UserConfig
 from src.storage import FileStorageBackend, MySQLStorageBackend, SQLiteStorageBackend, StorageFactory, StoragePagination, StorageSearchQuery
 
@@ -43,9 +43,10 @@ class TestFailure(RuntimeError):
 
 async def run_all() -> None:
     config = ConfigBundle(
-        app=AppConfig(app_name="self-test", debug=True, environment=EnvironmentConfig()),
+        app=AppConfig(app_name="self-test", debug=True, environment=EnvironmentConfig(name="test", source="self-test")),
         logging=LoggingConfig(version=1),
         secrets=SecretConfig(api_key="test-key", database_url="sqlite:///:memory:"),
+        raw_environment={"APP_ENV": "test"},
         presets={
             "system_presets": [
                 {
@@ -201,6 +202,9 @@ async def run_all() -> None:
     print("[12/14] 配置加载与会话生命周期补充")
     assert config.app.app_name == "self-test"
     assert config.secrets.api_key == "test-key"
+    assert config.app.environment.name == "test"
+    assert config.app.environment.source == "self-test"
+    assert ConfigManager(env_name="test")._normalize_env_name("TEST") == "test"
     assert session_manager.set_active_session(target_session.id, user_id=alice.id).id == target_session.id
     deleted = session_manager.delete_session(target_session.id, user_id=alice.id)
     assert deleted is True

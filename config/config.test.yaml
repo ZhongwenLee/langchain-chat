@@ -1,0 +1,7 @@
+app_name: "langchain-chat-test"
+debug: false
+environment:
+  name: "test"
+  overrides:
+    database_profile: "isolated"
+    secret_scope: "ci"

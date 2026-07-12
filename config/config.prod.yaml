@@ -1,0 +1,7 @@
+app_name: "langchain-chat"
+debug: false
+environment:
+  name: "prod"
+  overrides:
+    database_profile: "production"
+    secret_scope: "runtime"

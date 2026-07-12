@@ -1,0 +1,7 @@
+app_name: "langchain-chat"
+debug: true
+environment:
+  name: "dev"
+  overrides:
+    database_profile: "local"
+    secret_scope: "developer"
