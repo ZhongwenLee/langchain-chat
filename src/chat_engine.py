@@ -170,6 +170,28 @@ class ChatEngine:
 
         return turns
 
+    def build_prompt_for_session(
+        self,
+        session_id: str | UUID | None = None,
+        *,
+        user_id: str | UUID | None = None,
+        prompt_override: str | None = None,
+    ) -> str | None:
+        """生成当前会话对应的系统提示词。"""
+
+        session = self._resolve_session(session_id, user_id=user_id)
+        messages = self.session_manager.list_messages(session.id, user_id)
+        active_prompt = prompt_override if prompt_override is not None else self.system_prompt
+        if active_prompt:
+            return active_prompt
+
+        # 如果当前没有显式系统提示词，则尝试从历史会话里提取首个 system 消息。
+        # 这样即使切换模型或恢复会话，历史上下文也不会丢失预设角色信息。
+        for message in messages:
+            if message.role == MessageRole.SYSTEM:
+                return message.content
+        return None
+
     async def ask(
         self,
         content: str,

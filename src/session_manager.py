@@ -266,8 +266,8 @@ class SessionManager:
 
     def _title_preview(self, content: str) -> str:
         # 自动标题尽量简短，避免在会话列表里显示过长文本。
-        # 这里简单做一个“前缀截断 + 换行压平”的轻量实现，后续也方便替换成 LLM 摘要。
+        # 这里按需求保留用户首条消息前 30 个字符作为标题预览，便于列表页快速识别主题。
         text = " ".join(content.strip().split())
-        if len(text) <= 18:
+        if len(text) <= 30:
             return text
-        return f"{text[:18]}..."
+        return f"{text[:30]}..."
