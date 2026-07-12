@@ -1,81 +1,55 @@
 # langchain-chat
 
-A clean project scaffold for a LangChain-based chat application.
+基于 LangChain 的多轮会话教学项目。
 
-## Project structure
+## 当前状态
 
-- `src/` application source code
-- `tests/` automated tests
-- `config/` configuration files
-- `data/` local data and fixtures
-- `scripts/` utility scripts
-- `docs/` project documentation
+本仓库已经具备用户、会话、预设、配置与存储层的基础实现，并开始补齐多环境配置隔离能力。
 
-## Getting started
+## 开发环境
 
-Create an isolated environment with `uv`:
+建议使用 `uv` 管理环境与依赖：
 
 ```bash
 uv venv
 uv sync --extra dev
 ```
 
-Run the test suite:
+## 运行测试
 
 ```bash
 uv run pytest
 ```
 
-Run the full end-to-end self-check script:
+## 运行自检脚本
 
 ```bash
 uv run python scripts/full_self_test.py
 ```
 
-This script exercises the current core flow end to end, including users, sessions, messages, storage, and chat engine behavior. It is useful when you want a fast manual verification before pushing changes.
+## 环境切换
 
-Run the linter:
+通过 `APP_ENV` 切换运行环境，支持 `dev`、`test`、`prod`。
 
-```bash
-uv run ruff check .
-```
-
-## Environment setup
-
-The application now supports three isolated environments: `dev`, `test`, and `prod`.
-
-### Environment precedence
-
-1. Base configuration files: `config.yaml` and `.env`
-2. Environment-specific overrides: `config.{env}.yaml` and `.env.{env}`
-3. Process environment variables, which always override file-based values
-
-### Switching environments
-
-Set `APP_ENV` to one of `dev`, `test`, or `prod` before starting the app. No code changes are required.
-
-```bash
-# PowerShell
+```powershell
 $env:APP_ENV = "test"
 uv run pytest
 ```
 
 ```bash
-# Bash
 APP_ENV=prod uv run python scripts/full_self_test.py
 ```
 
-### File layout
+## 配置约定
 
-- `config.yaml` is the shared baseline
-- `config.dev.yaml`, `config.test.yaml`, `config.prod.yaml` provide environment-specific overrides
-- `.env` is the shared baseline for secrets
-- `.env.dev`, `.env.test`, `.env.prod` provide environment-specific secrets and database URLs
+- `config.yaml` 提供基础配置
+- `config/config.dev.yaml`、`config/config.test.yaml`、`config/config.prod.yaml` 提供环境覆盖
+- `.env` 提供基础敏感信息
+- `.env.dev`、`.env.test`、`.env.prod` 提供环境专属敏感信息
+- 进程环境变量优先级最高
 
-### Isolation guarantees
+## 已知后续工作
 
-- `dev`, `test`, and `prod` use separate database URLs by default
-- secret values are loaded from the matching `.env.{env}` file when present
-- the configuration loader deep-merges nested dictionaries so you only need to write the differences in each environment file
-
-Copy `.env.example` to `.env` for the base fallback values, then add the environment-specific files you need.
+- 补齐 LangChain 真正的流式模型适配
+- 完成 TUI 交互菜单与流式渲染
+- 为搜索、导出、日志和多模型切换补齐业务实现

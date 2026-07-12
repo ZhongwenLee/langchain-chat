@@ -1,5 +1,9 @@
 app_name: "langchain-chat"
 debug: false
 environment:
-  name: "development"
-  overrides: {}
+  name: "dev"
+  overrides:
+    default_model: "gpt-4o-mini"
+    storage_type: "sqlite"
+    timeout_seconds: 30
+    max_retries: 2
