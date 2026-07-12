@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from src import ChatChunk, ChatEngine, ChatTurn, MessageRole, SessionManager, UserManager
+from src import ChatChunk, ChatEngine, ChatTurn, MessageRole, PresetManager, SessionManager, UserManager
 from src.chat_engine import ChatResponse, TokenUsage
 from src.config_manager import AppConfig, ConfigBundle, EnvironmentConfig, LoggingConfig, SecretConfig
 from src.models import Message, Preset, PresetScope, Session, User, UserConfig
@@ -45,14 +45,32 @@ async def run_all() -> None:
         app=AppConfig(app_name="self-test", debug=True, environment=EnvironmentConfig()),
         logging=LoggingConfig(version=1),
         secrets=SecretConfig(api_key="test-key", database_url="sqlite:///:memory:"),
+        presets={
+            "system_presets": [
+                {
+                    "id": "default-assistant",
+                    "name": "默认助手",
+                    "description": "通用对话场景，适合日常问答、总结和轻量分析。",
+                    "scope": "global",
+                    "model_name": "gpt-4.1",
+                    "temperature": 0.7,
+                    "prompt_template": "你是一个专业、可靠、表达清晰的中文 AI 助手。\n你需要优先给出直接、准确、可执行的回答。\n如果信息不足，请明确指出缺失内容，并给出下一步建议。",
+                }
+            ],
+            "user_preset_schema": {
+                "enabled": True,
+                "storage_hint": "预留用户自定义预设入口，后续可接入数据库或文件系统。",
+            },
+        },
     )
     backend = SQLiteStorageBackend(database_url="sqlite:///:memory:", config=config)
     await backend.aconnect()
 
     user_manager = UserManager(storage=backend)
     session_manager = SessionManager(storage=backend, user_manager=user_manager)
+    preset_manager = PresetManager(config=config)
 
-    print("[1/8] 用户与配置")
+    print("[1/10] 用户与配置")
     alice = user_manager.create_user(username="alice", email="alice@example.com")
     bob = user_manager.create_user(username="bob", email="bob@example.com")
     assert user_manager.get_current_user() is not None
@@ -61,7 +79,7 @@ async def run_all() -> None:
     assert user_manager.get_user_config(alice.id).preferences["font_size"] == "16"
     assert len(user_manager.list_users()) == 2
 
-    print("[2/8] 会话创建、重命名、归档")
+    print("[2/10] 会话创建、重命名、归档")
     session = session_manager.create_session(alice.id, preset_hint="聊天测试")
     assert session.user_id == alice.id
     renamed = session_manager.rename_session(session.id, "正式标题", user_id=alice.id)
@@ -69,14 +87,14 @@ async def run_all() -> None:
     archived = session_manager.archive_session(session.id, user_id=alice.id)
     assert archived.is_archived is True
 
-    print("[3/8] 消息写入与顺序")
+    print("[3/10] 消息写入与顺序")
     session_manager.add_message(session.id, MessageRole.USER, "你好，系统", user_id=alice.id)
     session_manager.add_message(session.id, MessageRole.ASSISTANT, "你好！", user_id=alice.id, auto_title=False)
     messages = session_manager.list_messages(session.id, alice.id)
     assert [m.sequence for m in messages] == [0, 1]
     assert [m.role for m in messages] == [MessageRole.USER, MessageRole.ASSISTANT]
 
-    print("[4/8] 搜索、分页与导出")
+    print("[4/10] 搜索、分页与导出")
     page = backend.list("users", StoragePagination(page=1, page_size=1))
     assert page.total >= 2 and len(page.items) == 1
     search = backend.search("users", StorageSearchQuery(keyword="alice", fields=("username",)))
@@ -85,7 +103,7 @@ async def run_all() -> None:
     assert exported.format == "json"
     assert "alice@example.com" in str(exported.payload)
 
-    print("[5/8] 模型层校验")
+    print("[5/10] 模型层校验")
     preset = Preset(
         owner_id=alice.id,
         name="默认预设",
@@ -99,7 +117,7 @@ async def run_all() -> None:
     assert isinstance(Message.model_validate(messages[0].model_dump()), Message)
     assert isinstance(UserConfig.model_validate(user_manager.get_user_config(alice.id).model_dump()), UserConfig)
 
-    print("[6/8] 聊天引擎非流式")
+    print("[6/10] 聊天引擎非流式")
     engine = ChatEngine(session_manager=session_manager, user_manager=user_manager, model=FakeModel(reply="模型回复内容"), system_prompt="你是测试助手")
     response: ChatResponse = await engine.ask("第一轮问题", session_id=session.id, user_id=alice.id)
     assert response.content == "模型回复内容"
@@ -107,7 +125,7 @@ async def run_all() -> None:
     assert response.assistant_message.content == "模型回复内容"
     assert response.metadata["source"] == "fake-model"
 
-    print("[7/8] 聊天引擎流式")
+    print("[7/10] 聊天引擎流式")
     stream_chunks: list[ChatChunk] = []
     async for chunk in engine.astream("第二轮问题", session_id=session.id, user_id=alice.id):
         stream_chunks.append(chunk)
@@ -115,7 +133,7 @@ async def run_all() -> None:
     assert stream_chunks[-1].content == "模型回复内容"
     assert stream_chunks[-1].metadata["model_name"] == "claude-3-haiku"
 
-    print("[8/8] 构建上下文、切换模型、越权校验")
+    print("[8/10] 构建上下文、切换模型、越权校验")
     built = engine.build_messages(session.id, user_id=alice.id, extra_turns=[ChatTurn(role=MessageRole.USER, content="补充问题")])
     assert built[0]["role"] == "system"
     assert built[-1]["content"] == "补充问题"
@@ -131,8 +149,30 @@ async def run_all() -> None:
     else:
         raise TestFailure("越权读取不应通过")
 
-    stats = engine.build_messages(session.id, user_id=alice.id)
-    assert len(stats) >= 1
+    print("[9/10] 预设管理器与 system prompt")
+    builtin_presets = preset_manager.list_builtin_presets()
+    assert len(builtin_presets) >= 1
+    default_preset = preset_manager.select_preset()
+    assert default_preset.model_name
+    system_prompt = preset_manager.build_system_prompt(default_preset.id)
+    assert default_preset.name in system_prompt
+    prompt_context = preset_manager.create_session_prompt_context(default_preset.id)
+    assert prompt_context["preset_id"] == str(default_preset.id)
+    assert prompt_context["system_prompt"] == system_prompt
+    assert preset_manager.get_preset(default_preset.name).id == default_preset.id
+
+    print("[10/10] 配置加载与会话生命周期补充")
+    assert config.app.app_name == "self-test"
+    assert config.secrets.api_key == "test-key"
+    assert session_manager.set_active_session(session.id, user_id=alice.id).id == session.id
+    deleted = session_manager.delete_session(session.id, user_id=alice.id)
+    assert deleted is True
+    assert session_manager.get_session(session.id) is None
+    assert session_manager.get_active_session() is None
+
+    deleted_user = user_manager.delete_user(bob.id)
+    assert deleted_user is True
+    assert user_manager.get_user(bob.id) is None
 
     await backend.aclose()
     print("\n全部自检通过。")

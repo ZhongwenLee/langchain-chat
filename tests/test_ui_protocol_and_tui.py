@@ -17,7 +17,10 @@ class FakeClaude:
     reply: str = ""
 
     async def astream(self, messages, **kwargs):
-        yield ChatChunk(content=self.reply, is_final=True, usage=TokenUsage(prompt_tokens=3, completion_tokens=2, total_tokens=5))
+        for token in [self.reply[:1], self.reply[1:]]:
+            if token:
+                yield ChatChunk(content=token, is_final=False)
+        yield ChatChunk(content="", is_final=True, usage=TokenUsage(prompt_tokens=3, completion_tokens=2, total_tokens=5))
 
     async def ainvoke(self, messages, **kwargs):
         return ChatChunk(content=self.reply, is_final=True, usage=TokenUsage(prompt_tokens=3, completion_tokens=2, total_tokens=5))
@@ -118,8 +121,24 @@ async def test_tui_app_send_message_and_preview(app: TUIApp) -> None:
     assert result.ok is True
     assert result.message == "已收到"
     assert result.data["model_name"] == "claude-3-haiku"
+    assert result.data["tokens"] == 5
 
     preview = app.get_preview()
     assert preview is not None
     assert preview.user_text == "你好，TUI"
     assert preview.assistant_text == "已收到"
+
+
+@pytest.mark.asyncio
+async def test_tui_app_stream_message_and_controls(app: TUIApp) -> None:
+    result = await app.stream_message("流式测试")
+
+    assert result.ok is True
+    assert result.message == "已收到"
+    assert result.data["tokens"] == 5
+    assert app.get_status_summary().startswith("模型 claude-3-haiku")
+
+    pause_result = app.handle_event(UIEvent(name="pause"))
+    resume_result = app.handle_event(UIEvent(name="resume"))
+    assert pause_result.ok is True
+    assert resume_result.ok is True
