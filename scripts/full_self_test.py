@@ -11,7 +11,7 @@ from src import ChatChunk, ChatEngine, ChatTurn, MessageRole, PresetManager, Ses
 from src.chat_engine import ChatResponse, TokenUsage
 from src.config_manager import AppConfig, ConfigBundle, EnvironmentConfig, LoggingConfig, SecretConfig
 from src.models import Message, Preset, PresetScope, Session, User, UserConfig
-from src.storage import SQLiteStorageBackend, StoragePagination, StorageSearchQuery
+from src.storage import FileStorageBackend, MySQLStorageBackend, SQLiteStorageBackend, StorageFactory, StoragePagination, StorageSearchQuery
 
 
 @dataclass
@@ -66,6 +66,12 @@ async def run_all() -> None:
     )
     backend = SQLiteStorageBackend(database_url="sqlite:///:memory:", config=config)
     await backend.aconnect()
+    factory_sqlite = StorageFactory().create(config)
+    assert isinstance(factory_sqlite, SQLiteStorageBackend)
+    factory_mysql = StorageFactory().create(ConfigBundle(app=config.app, logging=config.logging, secrets=SecretConfig(api_key="test-key", database_url="mysql://localhost/chat")))
+    assert isinstance(factory_mysql, MySQLStorageBackend)
+    factory_file = StorageFactory().create(ConfigBundle(app=config.app, logging=config.logging, secrets=SecretConfig(api_key="test-key", database_url="file://./_self_test_file")))
+    assert isinstance(factory_file, FileStorageBackend)
 
     user_manager = UserManager(storage=backend)
     session_manager = SessionManager(storage=backend, user_manager=user_manager)
@@ -98,7 +104,7 @@ async def run_all() -> None:
     assert [m.sequence for m in messages] == [0, 1]
     assert [m.role for m in messages] == [MessageRole.USER, MessageRole.ASSISTANT]
 
-    print("[4/12] 搜索、分页与导出")
+    print("[4/14] 搜索、分页与导出")
     page = backend.list("users", StoragePagination(page=1, page_size=1))
     assert page.total >= 2 and len(page.items) == 1
     search = backend.search("users", StorageSearchQuery(keyword="alice", fields=("username",)))
@@ -107,7 +113,7 @@ async def run_all() -> None:
     assert exported.format == "json"
     assert "alice@example.com" in str(exported.payload)
 
-    print("[5/12] 模型层校验")
+    print("[5/14] 模型层校验")
     preset = Preset(
         owner_id=alice.id,
         name="默认预设",
@@ -121,7 +127,7 @@ async def run_all() -> None:
     assert isinstance(Message.model_validate(messages[0].model_dump()), Message)
     assert isinstance(UserConfig.model_validate(user_manager.get_user_config(alice.id).model_dump()), UserConfig)
 
-    print("[6/12] 聊天引擎非流式")
+    print("[6/14] 聊天引擎非流式")
     engine = ChatEngine(session_manager=session_manager, user_manager=user_manager, model=FakeModel(reply="模型回复内容"), system_prompt="你是测试助手")
     response: ChatResponse = await engine.ask("第一轮问题", session_id=session.id, user_id=alice.id)
     assert response.content == "模型回复内容"
@@ -129,7 +135,7 @@ async def run_all() -> None:
     assert response.assistant_message.content == "模型回复内容"
     assert response.metadata["source"] == "fake-model"
 
-    print("[7/12] 聊天引擎流式")
+    print("[7/14] 聊天引擎流式")
     stream_chunks: list[ChatChunk] = []
     async for chunk in engine.astream("第二轮问题", session_id=session.id, user_id=alice.id):
         stream_chunks.append(chunk)
@@ -137,7 +143,7 @@ async def run_all() -> None:
     assert stream_chunks[-1].content == "模型回复内容"
     assert stream_chunks[-1].metadata["model_name"] == "claude-3-haiku"
 
-    print("[8/12] 构建上下文、切换模型、越权校验")
+    print("[8/14] 构建上下文、切换模型、越权校验")
     built = engine.build_messages(session.id, user_id=alice.id, extra_turns=[ChatTurn(role=MessageRole.USER, content="补充问题")])
     assert built[0]["role"] == "system"
     assert built[-1]["content"] == "补充问题"
@@ -153,7 +159,7 @@ async def run_all() -> None:
     else:
         raise TestFailure("越权读取不应通过")
 
-    print("[9/12] 预设管理器与 system prompt")
+    print("[9/14] 预设管理器与 system prompt")
     builtin_presets = preset_manager.list_builtin_presets()
     assert len(builtin_presets) >= 1
     default_preset = preset_manager.select_preset()
@@ -165,7 +171,7 @@ async def run_all() -> None:
     assert prompt_context["system_prompt"] == system_prompt
     assert preset_manager.get_preset(default_preset.name).id == default_preset.id
 
-    print("[10/12] 会话搜索、Markdown 导出与统计")
+    print("[10/14] 会话搜索、Markdown 导出与统计")
     session_manager.create_session(alice.id, title="搜索导出测试")
     target_session = session_manager.get_active_session()
     assert target_session is not None
@@ -180,7 +186,7 @@ async def run_all() -> None:
     assert stats.total_tokens >= stats.prompt_tokens
     assert stats.message_count >= 2
 
-    print("[11/13] TUI 菜单、预设与配置事件")
+    print("[11/14] TUI 菜单、预设与配置事件")
     actions = app.get_menu_actions()
     assert any(action.key == "search" for action in actions)
     assert any(action.key == "presets" for action in actions)
@@ -192,7 +198,7 @@ async def run_all() -> None:
     config_event = app.handle_event({"name": "user_config_get"})
     assert config_event.ok is True
 
-    print("[12/13] 配置加载与会话生命周期补充")
+    print("[12/14] 配置加载与会话生命周期补充")
     assert config.app.app_name == "self-test"
     assert config.secrets.api_key == "test-key"
     assert session_manager.set_active_session(target_session.id, user_id=alice.id).id == target_session.id
@@ -205,12 +211,13 @@ async def run_all() -> None:
     assert deleted_user is True
     assert user_manager.get_user(bob.id) is None
 
-    print("[13/13] 预设删除与配置持久化校验")
+    print("[13/14] 预设删除与配置持久化校验")
     assert user_manager.delete_user_preset(custom_preset.id, alice.id) is True
     assert user_manager.get_user_preset(custom_preset.id, alice.id) is None
     persisted_config = user_manager.get_user_config(alice.id)
     assert persisted_config.preferences["font_size"] == "16"
 
+    print("[14/14] 存储层工厂切换与 File/MySQL 后端验证")
     await backend.aclose()
     print("\n全部自检通过。")
 

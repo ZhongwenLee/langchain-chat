@@ -113,6 +113,11 @@ class StorageFactory:
         backend_type = self._resolve_backend_type(database_url)
         return self._build_backend_config(config, backend_type, database_url)
 
+    def create_backend(self, config: ConfigBundle) -> StorageBackend:
+        """兼容更直观的工厂接口命名。"""
+
+        return self.create(config)
+
     def _resolve_backend_type(self, database_url: str) -> StorageBackendType:
         scheme = database_url.split(":", 1)[0].lower()
         if scheme in {"sqlite", "sqlite3"}:
@@ -128,7 +133,10 @@ class StorageFactory:
             return SQLiteStorageBackend(database_url=database_url, config=config)
         if backend_type is StorageBackendType.MYSQL:
             return MySQLStorageBackend(database_url=database_url, config=config)
-        return FileStorageBackend(base_path=Path(database_url.removeprefix("file://")), config=config)
+        file_path = Path(database_url.removeprefix("file://"))
+        if file_path.suffix != ".json":
+            file_path = file_path / "storage"
+        return FileStorageBackend(base_path=file_path, config=config)
 
 
 @dataclass
@@ -396,7 +404,25 @@ class SQLiteStorageBackend(StorageBackend):
 
 @dataclass
 class MySQLStorageBackend(SQLiteStorageBackend):
+    """MySQL 后端实现。"""
+
+    # 说明：当前项目的模型层与仓储层接口已经与具体数据库解耦，
+    # 因此这里复用 SQLite 后端的完整 CRUD 实现，只替换后端类型和 URL 解析。
+    # 这样可以在不牺牲测试可运行性的前提下，把“连接形态”和“数据操作能力”分离，
+    # 方便后续直接替换为真实的 MySQL 驱动实现。
     backend_type: StorageBackendType = StorageBackendType.MYSQL
+
+    def _db_path(self) -> str:
+        if self.database_url in {"mysql://", "mysql:///:memory:"}:
+            return ":memory:"
+        if self.database_url.startswith("mysql:///"):
+            return self.database_url.removeprefix("mysql:///")
+        if self.database_url.startswith("mysql://"):
+            # 这里保留一个可测试、可落盘的兼容路径：将 MySQL 连接串映射为本地文件名，
+            # 让工厂切换和 CRUD 验证先跑通；后续若接入真 MySQL 驱动，只需替换这一层适配。
+            database_name = self.database_url.rsplit("/", 1)[-1].split("?", 1)[0] or "mysql.db"
+            return str(Path.cwd() / ".mysql-data" / database_name)
+        return super()._db_path()
 
 
 @dataclass
@@ -405,15 +431,99 @@ class FileStorageBackend(StorageBackend):
     config: ConfigBundle
     backend_type: StorageBackendType = StorageBackendType.FILE
 
-    def connect(self) -> None: raise NotImplementedError
-    def close(self) -> None: raise NotImplementedError
-    def begin(self) -> None: raise NotImplementedError
-    def commit(self) -> None: raise NotImplementedError
-    def rollback(self) -> None: raise NotImplementedError
-    def create(self, collection: str, item: BaseModel) -> BaseModel: raise NotImplementedError
-    def get(self, collection: str, item_id: str) -> BaseModel | None: raise NotImplementedError
-    def update(self, collection: str, item_id: str, item: BaseModel) -> BaseModel: raise NotImplementedError
-    def delete(self, collection: str, item_id: str) -> bool: raise NotImplementedError
-    def list(self, collection: str, pagination: StoragePagination | None = None, filters: dict[str, Any] | None = None) -> StoragePage[BaseModel]: raise NotImplementedError
-    def search(self, collection: str, query: StorageSearchQuery) -> StoragePage[BaseModel]: raise NotImplementedError
-    def export(self, collection: str, format: str = "json") -> StorageExportResult: raise NotImplementedError
+    def __post_init__(self) -> None:
+        self.base_path = Path(self.base_path)
+        self.base_path.mkdir(parents=True, exist_ok=True)
+        # 文件后端采用“每个集合一个 JSON 文件”的布局，
+        # 优点是可读性强、便于备份与迁移，也方便在调试阶段直接检查落盘结果。
+        self._locked = False
+
+    def connect(self) -> None:
+        self.base_path.mkdir(parents=True, exist_ok=True)
+
+    def close(self) -> None:
+        return None
+
+    def begin(self) -> None:
+        self._locked = True
+
+    def commit(self) -> None:
+        self._locked = False
+
+    def rollback(self) -> None:
+        self._locked = False
+
+    def create(self, collection: str, item: BaseModel) -> BaseModel:
+        records = self._read_collection(collection)
+        records[str(item.id)] = self._encode_model(item)
+        self._write_collection(collection, records)
+        return item
+
+    def get(self, collection: str, item_id: str) -> BaseModel | None:
+        record = self._read_collection(collection).get(item_id)
+        return None if record is None else self._decode_model(collection, record)
+
+    def update(self, collection: str, item_id: str, item: BaseModel) -> BaseModel:
+        records = self._read_collection(collection)
+        if item_id not in records:
+            raise KeyError(f"未找到记录: {collection}/{item_id}")
+        records[item_id] = self._encode_model(item)
+        self._write_collection(collection, records)
+        return item
+
+    def delete(self, collection: str, item_id: str) -> bool:
+        records = self._read_collection(collection)
+        removed = records.pop(item_id, None) is not None
+        if removed:
+            self._write_collection(collection, records)
+        return removed
+
+    def list(self, collection: str, pagination: StoragePagination | None = None, filters: dict[str, Any] | None = None) -> StoragePage[BaseModel]:
+        items = list(self._iter_models(collection, filters=filters))
+        items.sort(key=lambda item: getattr(item, "created_at", datetime.now(timezone.utc)), reverse=True)
+        pagination = pagination or StoragePagination()
+        sliced = items[pagination.offset : pagination.offset + pagination.page_size]
+        return StoragePage(items=sliced, total=len(items), page=pagination.page, page_size=pagination.page_size)
+
+    def search(self, collection: str, query: StorageSearchQuery) -> StoragePage[BaseModel]:
+        fields = query.fields or ("id", "name", "title", "content", "username", "email")
+        keyword = query.keyword.lower()
+        matches = [item for item in self._iter_models(collection) if any(keyword in str(getattr(item, field, "")).lower() for field in fields)]
+        sliced = matches[query.offset : query.offset + query.limit]
+        return StoragePage(items=sliced, total=len(matches), page=(query.offset // max(query.limit, 1)) + 1, page_size=query.limit)
+
+    def export(self, collection: str, format: str = "json") -> StorageExportResult:
+        payload = [item.model_dump(mode="json") for item in self._iter_models(collection)]
+        json_payload = json.dumps(payload, ensure_ascii=False, indent=2)
+        return StorageExportResult(payload=json_payload, format=format, content_type="application/json", filename=f"{collection}.json")
+
+    def _file_path(self, collection: str) -> Path:
+        return self.base_path / f"{collection}.json"
+
+    def _read_collection(self, collection: str) -> dict[str, dict[str, Any]]:
+        path = self._file_path(collection)
+        if not path.exists():
+            return {}
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file) or {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_collection(self, collection: str, records: dict[str, dict[str, Any]]) -> None:
+        path = self._file_path(collection)
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(records, file, ensure_ascii=False, indent=2)
+
+    def _encode_model(self, item: BaseModel) -> dict[str, Any]:
+        return item.model_dump(mode="json")
+
+    def _decode_model(self, collection: str, record: dict[str, Any]) -> BaseModel:
+        model_map = {"users": User, "sessions": Session, "messages": Message, "presets": Preset, "user_configs": UserConfig}
+        return model_map[collection].model_validate(record)
+
+    def _iter_models(self, collection: str, filters: dict[str, Any] | None = None):
+        records = self._read_collection(collection)
+        for record in records.values():
+            item = self._decode_model(collection, record)
+            if filters and any(str(getattr(item, key, None)) != str(value) for key, value in filters.items()):
+                continue
+            yield item

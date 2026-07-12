@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from uuid import uuid4
 
@@ -8,10 +9,13 @@ import pytest
 from src.config_manager import AppConfig, ConfigBundle, EnvironmentConfig, LoggingConfig, SecretConfig
 from src.models import Message, MessageRole, Session, User
 from src.storage import (
+    FileStorageBackend,
+    MySQLStorageBackend,
     SQLiteStorageBackend,
     StorageBackendType,
     StorageFactory,
     StoragePagination,
+    StorageSearchQuery,
 )
 
 
@@ -70,7 +74,45 @@ async def test_sqlite_backend_reopens_existing_database(config_bundle: ConfigBun
 
 
 def test_storage_factory_returns_sqlite_backend(config_bundle: ConfigBundle) -> None:
-    backend = StorageFactory().create(config_bundle)
+    backend = StorageFactory().create_backend(config_bundle)
 
     assert isinstance(backend, SQLiteStorageBackend)
     assert backend.backend_type is StorageBackendType.SQLITE
+
+
+@pytest.mark.asyncio
+async def test_file_backend_crud(config_bundle: ConfigBundle, tmp_path: Path) -> None:
+    file_config = ConfigBundle(
+        app=config_bundle.app,
+        logging=config_bundle.logging,
+        secrets=SecretConfig(api_key="test-key", database_url=f"file://{tmp_path / 'storage'}"),
+    )
+    backend = FileStorageBackend(base_path=tmp_path / "storage", config=file_config)
+    backend.connect()
+
+    user = User(id=uuid4(), username="carol", email="carol@example.com")
+    await asyncio.to_thread(backend.create, "users", user)
+    stored_user = await asyncio.to_thread(backend.get, "users", str(user.id))
+    assert stored_user == user
+
+    page = await asyncio.to_thread(backend.list, "users", StoragePagination(page=1, page_size=10))
+    assert page.total == 1
+
+    search = await asyncio.to_thread(backend.search, "users", StorageSearchQuery(keyword="carol", fields=("username",)))
+    assert search.total == 1
+
+    assert await asyncio.to_thread(backend.delete, "users", str(user.id)) is True
+    assert await asyncio.to_thread(backend.get, "users", str(user.id)) is None
+
+
+def test_factory_resolves_mysql_and_file(config_bundle: ConfigBundle, tmp_path: Path) -> None:
+    mysql_bundle = ConfigBundle(app=config_bundle.app, logging=config_bundle.logging, secrets=SecretConfig(api_key="test-key", database_url="mysql://localhost/chat"))
+    file_bundle = ConfigBundle(app=config_bundle.app, logging=config_bundle.logging, secrets=SecretConfig(api_key="test-key", database_url=f"file://{tmp_path / 'file-store'}"))
+
+    mysql_backend = StorageFactory().create(mysql_bundle)
+    file_backend = StorageFactory().create(file_bundle)
+
+    assert isinstance(mysql_backend, MySQLStorageBackend)
+    assert mysql_backend.backend_type is StorageBackendType.MYSQL
+    assert isinstance(file_backend, FileStorageBackend)
+    assert file_backend.backend_type is StorageBackendType.FILE
