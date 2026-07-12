@@ -82,6 +82,8 @@ class StorageBackend(ABC):
     backend_type: StorageBackendType
 
     @abstractmethod
+    def initialize(self) -> None: ...
+    @abstractmethod
     def connect(self) -> None: ...
     @abstractmethod
     def close(self) -> None: ...
@@ -184,6 +186,12 @@ class SQLiteStorageBackend(StorageBackend):
         if error:
             raise error[0]
         return result.get("value")
+
+    async def ainitialize(self) -> None:
+        await self.aconnect()
+
+    def initialize(self) -> None:
+        self.connect()
 
     async def ainitialize(self) -> None:
         await self.aconnect()
@@ -437,6 +445,9 @@ class FileStorageBackend(StorageBackend):
         # 文件后端采用“每个集合一个 JSON 文件”的布局，
         # 优点是可读性强、便于备份与迁移，也方便在调试阶段直接检查落盘结果。
         self._locked = False
+
+    def initialize(self) -> None:
+        self.base_path.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> None:
         self.base_path.mkdir(parents=True, exist_ok=True)

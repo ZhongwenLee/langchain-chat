@@ -88,7 +88,7 @@ class ConfigManager:
         env_env = self._load_env_file(self.base_path / f".env.{self._env_name}")
         env_values = self._merge_dicts(base_env, env_env)
         config_values = self._load_merged_yaml(
-            self._config_dir / "config.yaml",
+            self.base_path / "config.yaml",
             self._config_dir / f"config.{self._env_name}.yaml",
         )
         logging_values = self._load_merged_yaml(
@@ -149,15 +149,27 @@ class ConfigManager:
     def _load_merged_yaml(self, base_path: Path, env_path: Path, optional: bool = False) -> dict[str, Any]:
         """加载基础 YAML，并允许环境专属 YAML 对其做深度合并覆盖。"""
 
-        if not base_path.exists():
+        resolved_base = self._resolve_base_yaml(base_path)
+        if resolved_base is None:
             if optional and not env_path.exists():
                 return {}
             if optional:
                 return self._load_yaml_file(env_path)
             raise ConfigError(f"配置文件不存在: {base_path}")
-        base_values = self._load_yaml_file(base_path)
+        base_values = self._load_yaml_file(resolved_base)
         env_values = self._load_yaml_file(env_path) if env_path.exists() else {}
         return self._merge_dicts(base_values, env_values)
+
+    def _resolve_base_yaml(self, path: Path) -> Path | None:
+        """兼容项目根目录和 config/ 目录两种摆放方式。"""
+
+        if path.exists():
+            return path
+        if path.name == "config.yaml":
+            nested = self._config_dir / path.name
+            if nested.exists():
+                return nested
+        return None
 
     def _merge_dicts(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         """递归合并两个字典。
@@ -209,7 +221,7 @@ class ConfigManager:
             env_file=f".env.{self._env_name}" if (self.base_path / f".env.{self._env_name}").exists() else ".env",
             config_file=f"config.{self._env_name}.yaml" if (self._config_dir / f"config.{self._env_name}.yaml").exists() else "config.yaml",
             source=f"{self._env_name}",
-            merged_keys=tuple(sorted(k for k in env_values.keys() if k in {"APP_ENV", "API_KEY", "DATABASE_URL"})),
+            merged_keys=tuple(sorted(k for k in env_values.keys() if k in {"APP_ENV", "API_KEY", "DATABASE_URL", "MODEL_NAME"})),
         )
 
     def _build_logging_config(self, data: dict[str, Any]) -> LoggingConfig:
