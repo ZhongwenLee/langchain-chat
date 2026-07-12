@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -68,6 +69,7 @@ def test_tui_state_and_actions(app: TUIApp) -> None:
     assert state.active_session is not None
     assert "model_name" in state.metadata
     assert app.get_status_summary().startswith("模型 claude-3-haiku")
+    assert len(app.get_menu_actions()) >= 3
 
     pause_result = app.handle_event(UIEvent(name="pause"))
     resume_result = app.handle_event(UIEvent(name="resume"))
@@ -110,6 +112,31 @@ async def test_tui_session_management_and_preview(app: TUIApp, user_manager: Use
 
     preview = app.get_preview()
     assert preview is not None
+
+
+@pytest.mark.asyncio
+async def test_tui_search_export_and_stats(app: TUIApp, session_manager: SessionManager, user_manager: UserManager, tmp_path: Path) -> None:
+    user = user_manager.get_current_user()
+    assert user is not None
+    session = session_manager.get_active_session()
+    assert session is not None
+
+    session_manager.add_message(session.id, "user", "搜索关键词在这里", user_id=user.id)
+    session_manager.add_message(session.id, "assistant", "好的，我记住了", user_id=user.id, auto_title=False)
+
+    hits = app.search_messages("关键词")
+    assert hits and hits[0].matched_keyword == "关键词"
+
+    export_info = app.export_session_markdown(session.id, export_dir=tmp_path)
+    assert Path(export_info.path).exists()
+    assert export_info.message_count >= 2
+
+    stats = app.get_session_stats(session.id)
+    assert stats.total_tokens >= stats.prompt_tokens
+    assert stats.message_count >= 2
+
+    event_result = app.handle_event(UIEvent(name="search_messages", payload={"keyword": "关键词"}))
+    assert event_result.ok is True
 
 
 @pytest.mark.asyncio
