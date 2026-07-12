@@ -108,6 +108,13 @@ class UserManager:
         user = self.get_user(user_id)
         if user is None:
             return False
+        # 这里显式按依赖顺序清理，避免在某些后端上因为外键行为差异造成残留数据。
+        for collection in ("messages", "sessions", "user_configs", "presets"):
+            related_items = self.storage.list(collection, StoragePagination(page=1, page_size=10000))
+            for item in related_items.items:
+                owner_id = getattr(item, "user_id", None) or getattr(item, "owner_id", None)
+                if owner_id is not None and str(owner_id) == str(user.id):
+                    self.storage.delete(collection, str(item.id))
         deleted = self.storage.delete("users", str(user.id))
         if deleted and self.current_user_id == user.id:
             # 当前用户被删掉后，必须把登录态一并清空，

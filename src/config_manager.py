@@ -101,6 +101,8 @@ class ConfigManager:
             optional=True,
         )
 
+        # 这里把“基础 .env + 环境专属 .env”合并成最终敏感配置，
+        # 但仍然保留 raw_environment，方便测试验证当前究竟读取了哪一组文件。
         secrets = SecretConfig(
             api_key=self._require_value("API_KEY", env_values),
             database_url=self._require_value("DATABASE_URL", env_values),

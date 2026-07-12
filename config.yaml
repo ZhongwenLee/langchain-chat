@@ -1,9 +1,21 @@
 app_name: "langchain-chat"
 debug: false
+storage:
+  type: sqlite
+  sqlite:
+    path: data/sqlite/app.db
+  mysql:
+    host: localhost
+    port: 3306
+    user: root
+    password: ""
+    database: langchain_chat
+llm:
+  default_model: gpt-4o-mini
+  timeout_seconds: 30
+  max_retries: 2
 environment:
-  name: "dev"
+  name: dev
   overrides:
-    default_model: "gpt-4o-mini"
-    storage_type: "sqlite"
-    timeout_seconds: 30
-    max_retries: 2
+    default_model: gpt-4o-mini
+    storage_type: sqlite
